@@ -7,7 +7,7 @@ export type SubscriptionStatus = 'active' | 'cancelled' | 'expired';
 export interface Database {
   public: {
     Tables: {
-      profiles: {
+      profilesS: {
         Row: {
           id: string;
           email: string;
