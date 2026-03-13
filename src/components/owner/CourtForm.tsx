@@ -29,6 +29,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
+  const [profileVerified, setProfileVerified] = useState(false);
   const [formData, setFormData] = useState({
     name: court?.name || '',
     sport_type: court?.sport_type || 'futebol_society',
@@ -52,51 +53,90 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     }
   }, [court]);
 
-  // Verificar/garantir que o perfil existe na tabela profilesS
-  useEffect(() => {
-    const ensureProfileExists = async () => {
-      if (!profile) {
-        setInitializing(false);
-        return;
+  // Função para garantir que o perfil existe
+  const ensureProfileExists = async () => {
+    if (!profile) {
+      setInitializing(false);
+      return false;
+    }
+
+    try {
+      console.log('🔍 Verificando perfil:', profile.id);
+
+      // ESTRATÉGIA 1: Tentar buscar o profile
+      let { data: existingProfile, error: fetchError } = await supabase
+        .from('profilesS')
+        .select('*')
+        .eq('id', profile.id)
+        .maybeSingle();
+
+      if (fetchError) {
+        console.error('Erro ao buscar profile:', fetchError);
       }
 
-      try {
-        console.log('Verificando perfil:', profile.id);
+      // Se não encontrou, tentar criar
+      if (!existingProfile) {
+        console.log('📝 Profile não encontrado, criando novo...');
 
-        // Verificar se o profile existe na tabela profilesS
-        const { data: existingProfile, error: profileError } = await supabase
+        // Preparar dados do profile
+        const profileData = {
+          id: profile.id,
+          email: profile.email || '',
+          full_name: profile.user_metadata?.full_name || profile.email?.split('@')[0] || 'Proprietário',
+          phone: profile.user_metadata?.phone || '',
+          user_type: 'owner',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        console.log('Dados a serem inseridos:', profileData);
+
+        // ESTRATÉGIA 2: Inserir com tratamento de erro
+        const { data: insertData, error: insertError } = await supabase
           .from('profilesS')
-          .select('id, user_type')
-          .eq('id', profile.id)
-          .maybeSingle();
+          .insert(profileData)
+          .select()
+          .single();
 
-        if (profileError) {
-          console.error('Erro ao verificar perfil:', profileError);
-        }
+        if (insertError) {
+          console.error('❌ Erro ao inserir profile:', insertError);
 
-        // Se não existir, criar o profile
-        if (!existingProfile) {
-          console.log('Criando profile para o usuário:', profile.id);
+          // ESTRATÉGIA 3: Se falhou, tentar upsert
+          console.log('Tentando upsert...');
           
-          const { error: createProfileError } = await supabase
+          const { data: upsertData, error: upsertError } = await supabase
             .from('profilesS')
-            .insert({
-              id: profile.id,
-              email: profile.email,
-              full_name: profile.user_metadata?.full_name || profile.email?.split('@')[0] || 'Proprietário',
-              user_type: 'owner',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            });
+            .upsert(profileData, { onConflict: 'id' })
+            .select()
+            .single();
 
-          if (createProfileError) {
-            console.error('Erro ao criar profile:', createProfileError);
-          } else {
-            console.log('Profile criado com sucesso!');
+          if (upsertError) {
+            console.error('❌ Upsert também falhou:', upsertError);
+            
+            // ESTRATÉGIA 4: Verificar se a tabela existe
+            const { data: tables, error: tablesError } = await supabase
+              .from('information_schema.tables')
+              .select('table_name')
+              .eq('table_schema', 'public')
+              .eq('table_name', 'profilesS');
+
+            console.log('Tabela profilesS existe?', tables);
+
+            return false;
           }
-        } else if (existingProfile.user_type !== 'owner') {
-          // Se existir mas não for owner, atualizar
-          console.log('Atualizando tipo do usuário para owner');
+
+          console.log('✅ Profile criado via upsert:', upsertData);
+          existingProfile = upsertData;
+        } else {
+          console.log('✅ Profile criado com sucesso:', insertData);
+          existingProfile = insertData;
+        }
+      } else {
+        console.log('✅ Profile já existe:', existingProfile);
+
+        // Verificar se é owner, se não for, atualizar
+        if (existingProfile.user_type !== 'owner') {
+          console.log('Atualizando user_type para owner...');
           
           const { error: updateError } = await supabase
             .from('profilesS')
@@ -107,21 +147,48 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
             .eq('id', profile.id);
 
           if (updateError) {
-            console.error('Erro ao atualizar tipo do usuário:', updateError);
+            console.error('Erro ao atualizar user_type:', updateError);
           } else {
-            console.log('Tipo do usuário atualizado para owner');
+            console.log('user_type atualizado para owner');
           }
-        } else {
-          console.log('Perfil já existe e já é owner');
         }
-      } catch (error) {
-        console.error('Erro ao garantir perfil:', error);
-      } finally {
-        setInitializing(false);
       }
+
+      // Verificação final
+      const { data: finalCheck, error: finalError } = await supabase
+        .from('profilesS')
+        .select('id, user_type')
+        .eq('id', profile.id)
+        .single();
+
+      if (finalError) {
+        console.error('❌ Verificação final falhou:', finalError);
+        return false;
+      }
+
+      console.log('✅ Perfil verificado com sucesso:', finalCheck);
+      return true;
+
+    } catch (error) {
+      console.error('❌ Erro inesperado:', error);
+      return false;
+    } finally {
+      setInitializing(false);
+    }
+  };
+
+  // Verificar perfil ao carregar
+  useEffect(() => {
+    const verifyProfile = async () => {
+      const verified = await ensureProfileExists();
+      setProfileVerified(verified);
     };
 
-    ensureProfileExists();
+    if (profile) {
+      verifyProfile();
+    } else {
+      setInitializing(false);
+    }
   }, [profile]);
 
   const loadCourtData = async () => {
@@ -154,7 +221,6 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Verificar se o profile existe
     if (!profile) {
       alert('Usuário não autenticado');
       return;
@@ -168,25 +234,20 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     setLoading(true);
 
     try {
-      console.log('Iniciando salvamento da quadra...');
+      console.log('🚀 Iniciando salvamento da quadra...');
       console.log('Profile ID:', profile.id);
 
-      // Verificar novamente se o profile existe na tabela profilesS
-      const { data: existingProfile, error: checkError } = await supabase
+      // Verificar novamente se o profile existe (redundância para segurança)
+      const { data: profileCheck, error: checkError } = await supabase
         .from('profilesS')
-        .select('id, user_type')
+        .select('id')
         .eq('id', profile.id)
-        .maybeSingle();
+        .single();
 
-      if (checkError) {
-        console.error('Erro ao verificar profile:', checkError);
-        throw new Error('Erro ao verificar perfil do proprietário');
-      }
-
-      // Se ainda não existir, criar (segurança extra)
-      if (!existingProfile) {
-        console.log('Profile não encontrado, criando agora...');
+      if (checkError || !profileCheck) {
+        console.log('Profile não encontrado na verificação final, tentando criar...');
         
+        // Tentar criar o profile mais uma vez
         const { error: createError } = await supabase
           .from('profilesS')
           .insert({
@@ -199,13 +260,14 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           });
 
         if (createError) {
-          console.error('Erro ao criar profile:', createError);
-          throw new Error('Erro ao criar perfil do proprietário');
+          console.error('Erro ao criar profile na verificação final:', createError);
+          throw new Error('Não foi possível criar/verificar o perfil do proprietário');
         }
       }
 
+      // AGORA sim, inserir a quadra
       if (court) {
-        // ATUALIZAR quadra existente
+        // Editar quadra existente
         const { error: updateError } = await supabase
           .from('courts')
           .update({
@@ -243,9 +305,10 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           if (imagesError) throw imagesError;
         }
       } else {
-        // CRIAR nova quadra
+        // Criar nova quadra
         console.log('Criando nova quadra com owner_id:', profile.id);
         
+        // Primeiro, inserir a quadra
         const { data: newCourt, error: insertError } = await supabase
           .from('courts')
           .insert({
@@ -294,10 +357,10 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
         }
       }
 
-      console.log('Quadra salva com sucesso!');
+      console.log('✅ Quadra salva com sucesso!');
       onSuccess();
     } catch (error: any) {
-      console.error('Error saving court:', error);
+      console.error('❌ Error saving court:', error);
       alert('Erro ao salvar quadra: ' + error.message);
     } finally {
       setLoading(false);
@@ -338,7 +401,29 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     );
   }
 
-  // Verificar se o profile existe após inicialização
+  // Se não conseguiu verificar o perfil
+  if (!profileVerified) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center bg-white p-8 rounded-lg shadow-md max-w-md">
+          <div className="text-red-600 text-5xl mb-4">⚠️</div>
+          <h3 className="text-xl font-bold text-gray-900 mb-2">Erro de Perfil</h3>
+          <p className="text-gray-600 mb-6">
+            Não foi possível verificar ou criar seu perfil de proprietário.
+            Por favor, tente novamente ou contate o suporte.
+          </p>
+          <button
+            onClick={onClose}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+          >
+            Voltar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Verificar se o profile existe
   if (!profile) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
