@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS operating_hours (
 CREATE TABLE IF NOT EXISTS bookings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   court_id uuid NOT NULL REFERENCES courts(id) ON DELETE RESTRICT,
-  customer_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  customer_id uuid REFERENCES profilesS(id) ON DELETE SET NULL,
   booking_date date NOT NULL,
   start_time time NOT NULL,
   end_time time NOT NULL,
