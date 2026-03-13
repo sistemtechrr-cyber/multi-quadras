@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 -- Create courts table
 CREATE TABLE IF NOT EXISTS courts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  owner_id uuid NOT NULL REFERENCES profilesS(id) ON DELETE CASCADE,
   name text NOT NULL,
   sport_type text NOT NULL CHECK (sport_type IN ('futebol_society', 'futevolei', 'beach_tennis', 'volei')),
   description text,
