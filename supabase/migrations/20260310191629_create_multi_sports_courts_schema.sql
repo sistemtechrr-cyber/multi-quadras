@@ -222,7 +222,7 @@ ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for profiles
 CREATE POLICY "Users can view own profile"
-  ON profiles FOR SELECT
+  ON profilesS FOR SELECT
   TO authenticated
   USING (auth.uid() = id);
 
