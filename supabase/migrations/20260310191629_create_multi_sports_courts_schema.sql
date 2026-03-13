@@ -233,7 +233,7 @@ CREATE POLICY "Users can update own profile"
   WITH CHECK (auth.uid() = id);
 
 CREATE POLICY "Users can insert own profile"
-  ON profiles FOR INSERT
+  ON profilesS FOR INSERT
   TO authenticated
   WITH CHECK (auth.uid() = id);
 
