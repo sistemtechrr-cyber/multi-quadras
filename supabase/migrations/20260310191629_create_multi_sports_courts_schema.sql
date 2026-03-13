@@ -211,7 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_bookings_date ON bookings(booking_date);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_owner_id ON subscriptions(owner_id);
 
 -- Enable RLS
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE profilesS ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscription_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE courts ENABLE ROW LEVEL SECURITY;
