@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
 -- Create subscriptions table
 CREATE TABLE IF NOT EXISTS subscriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  owner_id uuid NOT NULL REFERENCES profilesS(id) ON DELETE CASCADE,
   plan_id uuid NOT NULL REFERENCES subscription_plans(id) ON DELETE RESTRICT,
   status text NOT NULL CHECK (status IN ('active', 'cancelled', 'expired')) DEFAULT 'active',
   starts_at timestamptz NOT NULL DEFAULT now(),
