@@ -3,23 +3,26 @@ import { useAuth } from './contexts/AuthContext';
 import { Header } from './components/layout/Header';
 import { Login } from './components/auth/Login';
 import { Register } from './components/auth/Register';
+import { LandingPage } from './pages/LandingPage';
 import { HomePage } from './pages/HomePage';
 import { OwnerDashboard } from './pages/OwnerDashboard';
 
-type Page = 'home' | 'dashboard';
+type Page = 'landing' | 'home' | 'dashboard';
 
 function App() {
   const { user, profile, loading } = useAuth();
-  const [showLogin, setShowLogin] = useState(true);
-  const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [showAuth, setShowAuth] = useState<'login' | 'register' | null>(null);
+  const [currentPage, setCurrentPage] = useState<Page>('landing');
 
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.slice(1);
       if (hash === 'dashboard') {
         setCurrentPage('dashboard');
-      } else {
+      } else if (hash === 'home') {
         setCurrentPage('home');
+      } else {
+        setCurrentPage('landing');
       }
     };
 
@@ -41,14 +44,27 @@ function App() {
   }
 
   if (!user || !profile) {
+    if (showAuth === 'login') {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
+          <Login onToggle={() => setShowAuth('register')} />
+        </div>
+      );
+    }
+
+    if (showAuth === 'register') {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
+          <Register onToggle={() => setShowAuth('login')} />
+        </div>
+      );
+    }
+
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
-        {showLogin ? (
-          <Login onToggle={() => setShowLogin(false)} />
-        ) : (
-          <Register onToggle={() => setShowLogin(true)} />
-        )}
-      </div>
+      <LandingPage
+        onLoginClick={() => setShowAuth('login')}
+        onRegisterClick={() => setShowAuth('register')}
+      />
     );
   }
 
