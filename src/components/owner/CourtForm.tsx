@@ -28,6 +28,7 @@ const amenitiesList = [
 export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
   const [formData, setFormData] = useState({
     name: court?.name || '',
     sport_type: court?.sport_type || 'futebol_society',
@@ -50,6 +51,78 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
       loadCourtData();
     }
   }, [court]);
+
+  // Verificar/garantir que o perfil existe na tabela profilesS
+  useEffect(() => {
+    const ensureProfileExists = async () => {
+      if (!profile) {
+        setInitializing(false);
+        return;
+      }
+
+      try {
+        console.log('Verificando perfil:', profile.id);
+
+        // Verificar se o profile existe na tabela profilesS
+        const { data: existingProfile, error: profileError } = await supabase
+          .from('profilesS')
+          .select('id, user_type')
+          .eq('id', profile.id)
+          .maybeSingle();
+
+        if (profileError) {
+          console.error('Erro ao verificar perfil:', profileError);
+        }
+
+        // Se não existir, criar o profile
+        if (!existingProfile) {
+          console.log('Criando profile para o usuário:', profile.id);
+          
+          const { error: createProfileError } = await supabase
+            .from('profilesS')
+            .insert({
+              id: profile.id,
+              email: profile.email,
+              full_name: profile.user_metadata?.full_name || profile.email?.split('@')[0] || 'Proprietário',
+              user_type: 'owner',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
+
+          if (createProfileError) {
+            console.error('Erro ao criar profile:', createProfileError);
+          } else {
+            console.log('Profile criado com sucesso!');
+          }
+        } else if (existingProfile.user_type !== 'owner') {
+          // Se existir mas não for owner, atualizar
+          console.log('Atualizando tipo do usuário para owner');
+          
+          const { error: updateError } = await supabase
+            .from('profilesS')
+            .update({ 
+              user_type: 'owner',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', profile.id);
+
+          if (updateError) {
+            console.error('Erro ao atualizar tipo do usuário:', updateError);
+          } else {
+            console.log('Tipo do usuário atualizado para owner');
+          }
+        } else {
+          console.log('Perfil já existe e já é owner');
+        }
+      } catch (error) {
+        console.error('Erro ao garantir perfil:', error);
+      } finally {
+        setInitializing(false);
+      }
+    };
+
+    ensureProfileExists();
+  }, [profile]);
 
   const loadCourtData = async () => {
     if (!court) return;
@@ -80,10 +153,59 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Verificar se o profile existe
+    if (!profile) {
+      alert('Usuário não autenticado');
+      return;
+    }
+
+    if (!profile.id) {
+      alert('ID do usuário não encontrado');
+      return;
+    }
+
     setLoading(true);
 
     try {
+      console.log('Iniciando salvamento da quadra...');
+      console.log('Profile ID:', profile.id);
+
+      // Verificar novamente se o profile existe na tabela profilesS
+      const { data: existingProfile, error: checkError } = await supabase
+        .from('profilesS')
+        .select('id, user_type')
+        .eq('id', profile.id)
+        .maybeSingle();
+
+      if (checkError) {
+        console.error('Erro ao verificar profile:', checkError);
+        throw new Error('Erro ao verificar perfil do proprietário');
+      }
+
+      // Se ainda não existir, criar (segurança extra)
+      if (!existingProfile) {
+        console.log('Profile não encontrado, criando agora...');
+        
+        const { error: createError } = await supabase
+          .from('profilesS')
+          .insert({
+            id: profile.id,
+            email: profile.email,
+            full_name: profile.user_metadata?.full_name || profile.email?.split('@')[0] || 'Proprietário',
+            user_type: 'owner',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (createError) {
+          console.error('Erro ao criar profile:', createError);
+          throw new Error('Erro ao criar perfil do proprietário');
+        }
+      }
+
       if (court) {
+        // ATUALIZAR quadra existente
         const { error: updateError } = await supabase
           .from('courts')
           .update({
@@ -94,9 +216,9 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
 
         if (updateError) throw updateError;
 
+        // Atualizar amenities
         await supabase.from('amenities').delete().eq('court_id', court.id);
-        await supabase.from('court_images').delete().eq('court_id', court.id);
-
+        
         if (selectedAmenities.length > 0) {
           const { error: amenitiesError } = await supabase
             .from('amenities')
@@ -105,6 +227,9 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           if (amenitiesError) throw amenitiesError;
         }
 
+        // Atualizar imagens
+        await supabase.from('court_images').delete().eq('court_id', court.id);
+        
         const validImageUrls = imageUrls.filter(url => url.trim() !== '');
         if (validImageUrls.length > 0) {
           const { error: imagesError } = await supabase
@@ -118,25 +243,40 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           if (imagesError) throw imagesError;
         }
       } else {
+        // CRIAR nova quadra
+        console.log('Criando nova quadra com owner_id:', profile.id);
+        
         const { data: newCourt, error: insertError } = await supabase
           .from('courts')
           .insert({
             ...formData,
-            owner_id: profile!.id,
+            owner_id: profile.id,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
           })
           .select()
           .single();
 
-        if (insertError) throw insertError;
+        if (insertError) {
+          console.error('Erro detalhado ao inserir quadra:', insertError);
+          throw insertError;
+        }
 
+        console.log('Quadra criada com sucesso:', newCourt);
+
+        // Inserir amenities
         if (newCourt && selectedAmenities.length > 0) {
           const { error: amenitiesError } = await supabase
             .from('amenities')
             .insert(selectedAmenities.map(name => ({ court_id: newCourt.id, name })));
 
-          if (amenitiesError) throw amenitiesError;
+          if (amenitiesError) {
+            console.error('Erro ao inserir amenities:', amenitiesError);
+            throw amenitiesError;
+          }
         }
 
+        // Inserir imagens
         const validImageUrls = imageUrls.filter(url => url.trim() !== '');
         if (newCourt && validImageUrls.length > 0) {
           const { error: imagesError } = await supabase
@@ -147,10 +287,14 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
               order: idx
             })));
 
-          if (imagesError) throw imagesError;
+          if (imagesError) {
+            console.error('Erro ao inserir imagens:', imagesError);
+            throw imagesError;
+          }
         }
       }
 
+      console.log('Quadra salva com sucesso!');
       onSuccess();
     } catch (error: any) {
       console.error('Error saving court:', error);
@@ -181,6 +325,35 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     newUrls[index] = value;
     setImageUrls(newUrls);
   };
+
+  // Tela de inicialização
+  if (initializing) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Verificando perfil...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Verificar se o profile existe após inicialização
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center bg-white p-8 rounded-lg shadow-md">
+          <p className="text-red-600 mb-4">Usuário não autenticado</p>
+          <button
+            onClick={onClose}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+          >
+            Voltar
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12">
@@ -241,8 +414,9 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
                 <input
                   type="number"
                   step="0.01"
+                  min="0"
                   value={formData.price_per_hour}
-                  onChange={(e) => setFormData({ ...formData, price_per_hour: parseFloat(e.target.value) })}
+                  onChange={(e) => setFormData({ ...formData, price_per_hour: parseFloat(e.target.value) || 0 })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   required
                 />
@@ -319,6 +493,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
                   onChange={(e) => setFormData({ ...formData, state: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Ex: SP"
+                  maxLength={2}
                 />
               </div>
 
@@ -331,6 +506,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
                   value={formData.zip_code}
                   onChange={(e) => setFormData({ ...formData, zip_code: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="00000-000"
                 />
               </div>
 
@@ -343,6 +519,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
                   value={formData.contact_phone}
                   onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="(00) 00000-0000"
                 />
               </div>
 
@@ -418,7 +595,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
               </div>
             </div>
 
-            <div className="flex space-x-4 pt-6">
+            <div className="flex space-x-4 pt-6 border-t">
               <button
                 type="button"
                 onClick={onClose}
