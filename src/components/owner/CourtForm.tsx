@@ -27,6 +27,7 @@ const amenitiesList = [
 export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const [loading, setLoading] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: court?.name || '',
     sport_type: court?.sport_type || 'futebol_society',
@@ -47,12 +48,19 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   // Buscar o usuário atual quando o componente montar
   useEffect(() => {
     const getCurrentUser = async () => {
+      console.log('=== BUSCANDO USUÁRIO ATUAL ===');
       const { data: { session } } = await supabase.auth.getSession();
+      
       if (session?.user) {
         setUserId(session.user.id);
-        console.log('Usuário atual:', session.user.email);
+        setUserEmail(session.user.email || null);
+        console.log('Usuário encontrado:', {
+          id: session.user.id,
+          email: session.user.email,
+          metadata: session.user.user_metadata
+        });
       } else {
-        console.error('Nenhum usuário logado');
+        console.error('NENHUM USUÁRIO LOGADO!');
       }
     };
     
@@ -69,23 +77,35 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     if (!court) return;
 
     try {
-      const { data: amenities } = await supabase
+      console.log('Carregando dados da quadra existente:', court.id);
+      
+      const { data: amenities, error: amenitiesError } = await supabase
         .from('amenities')
         .select('name')
         .eq('court_id', court.id);
 
-      if (amenities) {
-        setSelectedAmenities(amenities.map(a => a.name));
+      if (amenitiesError) {
+        console.error('Erro ao carregar amenities:', amenitiesError);
+      } else {
+        console.log('Amenities carregadas:', amenities);
+        if (amenities) {
+          setSelectedAmenities(amenities.map(a => a.name));
+        }
       }
 
-      const { data: images } = await supabase
+      const { data: images, error: imagesError } = await supabase
         .from('court_images')
         .select('image_url')
         .eq('court_id', court.id)
         .order('order');
 
-      if (images && images.length > 0) {
-        setImageUrls(images.map(i => i.image_url));
+      if (imagesError) {
+        console.error('Erro ao carregar imagens:', imagesError);
+      } else {
+        console.log('Imagens carregadas:', images);
+        if (images && images.length > 0) {
+          setImageUrls(images.map(i => i.image_url));
+        }
       }
     } catch (error) {
       console.error('Erro ao carregar dados da quadra:', error);
@@ -95,7 +115,13 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('=== INICIANDO SUBMIT ===');
+    console.log('Dados do formulário:', formData);
+    console.log('Amenities selecionadas:', selectedAmenities);
+    console.log('URLs das imagens:', imageUrls);
+    
     if (!userId) {
+      console.error('ERRO: userId não encontrado');
       alert('Usuário não está logado. Faça login novamente.');
       return;
     }
@@ -103,150 +129,190 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     setLoading(true);
 
     try {
-      console.log('Salvando quadra para o usuário:', userId);
+      // PASSO 1: Verificar se o usuário tem perfil
+      console.log('PASSO 1 - Verificando perfil do usuário:', userId);
+      
+      const { data: profile, error: profileError } = await supabase
+        .from('profilesS')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
 
-      if (court) {
-        // EDITAR quadra existente
-        const { error: updateError } = await supabase
-          .from('courts')
-          .update({
-            ...formData,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', court.id);
+      console.log('Resultado da busca de perfil:', { profile, profileError });
 
-        if (updateError) throw updateError;
+      if (profileError) {
+        console.error('Erro ao buscar perfil:', profileError);
+      }
 
-        // Atualizar amenities
-        await supabase.from('amenities').delete().eq('court_id', court.id);
+      // Se não tiver perfil, criar
+      if (!profile) {
+        console.log('PASSO 2 - Perfil não encontrado, criando novo perfil...');
         
-        if (selectedAmenities.length > 0) {
-          const { error: amenitiesError } = await supabase
-            .from('amenities')
-            .insert(selectedAmenities.map(name => ({ court_id: court.id, name })));
-
-          if (amenitiesError) throw amenitiesError;
-        }
-
-        // Atualizar imagens
-        await supabase.from('court_images').delete().eq('court_id', court.id);
-        
-        const validImageUrls = imageUrls.filter(url => url.trim() !== '');
-        if (validImageUrls.length > 0) {
-          const { error: imagesError } = await supabase
-            .from('court_images')
-            .insert(validImageUrls.map((url, idx) => ({
-              court_id: court.id,
-              image_url: url,
-              order: idx
-            })));
-
-          if (imagesError) throw imagesError;
-        }
-      } else {
-        // CRIAR nova quadra
-        const { data: newCourt, error: insertError } = await supabase
-          .from('courts')
+        const { data: newProfile, error: createError } = await supabase
+          .from('profilesS')
           .insert({
-            ...formData,
-            owner_id: userId,
+            id: userId,
+            email: userEmail || '',
+            full_name: 'Proprietário',
+            user_type: 'owner',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           })
           .select()
           .single();
 
-        if (insertError) {
-          console.error('Erro ao inserir:', insertError);
-          
-          // Se for erro de foreign key, verificar se o perfil existe
-          if (insertError.message.includes('foreign key')) {
-            // Verificar se o usuário tem perfil
-            const { data: profile } = await supabase
-              .from('profilesS')
-              .select('id')
-              .eq('id', userId)
-              .maybeSingle();
-            
-            if (!profile) {
-              // Criar o perfil automaticamente
-              const { data: user } = await supabase.auth.getUser();
-              
-              await supabase
-                .from('profilesS')
-                .insert({
-                  id: userId,
-                  email: user.user?.email,
-                  full_name: user.user?.user_metadata?.full_name || user.user?.email?.split('@')[0],
-                  user_type: 'owner',
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString()
-                });
-              
-              // Tentar inserir novamente
-              const { data: retryCourt, error: retryError } = await supabase
-                .from('courts')
-                .insert({
-                  ...formData,
-                  owner_id: userId,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString()
-                })
-                .select()
-                .single();
-              
-              if (retryError) throw retryError;
-              
-              // Inserir amenities e imagens para a nova quadra
-              if (selectedAmenities.length > 0) {
-                await supabase
-                  .from('amenities')
-                  .insert(selectedAmenities.map(name => ({ court_id: retryCourt.id, name })));
-              }
+        console.log('Resultado da criação de perfil:', { newProfile, createError });
 
-              const validImageUrls = imageUrls.filter(url => url.trim() !== '');
-              if (validImageUrls.length > 0) {
-                await supabase
-                  .from('court_images')
-                  .insert(validImageUrls.map((url, idx) => ({
-                    court_id: retryCourt.id,
-                    image_url: url,
-                    order: idx
-                  })));
-              }
-            }
-          } else {
-            throw insertError;
-          }
-        } else {
-          // Inserir amenities e imagens para a nova quadra
-          if (selectedAmenities.length > 0) {
-            await supabase
-              .from('amenities')
-              .insert(selectedAmenities.map(name => ({ court_id: newCourt.id, name })));
-          }
-
-          const validImageUrls = imageUrls.filter(url => url.trim() !== '');
-          if (validImageUrls.length > 0) {
-            await supabase
-              .from('court_images')
-              .insert(validImageUrls.map((url, idx) => ({
-                court_id: newCourt.id,
-                image_url: url,
-                order: idx
-              })));
-          }
+        if (createError) {
+          console.error('Erro ao criar perfil:', createError);
+          throw new Error('Erro ao criar perfil do proprietário');
         }
       }
+
+      // PASSO 3: Verificar/Criar a quadra
+      if (court) {
+        // EDITAR quadra existente
+        console.log('PASSO 3 - Editando quadra existente:', court.id);
+        
+        const updateData = {
+          ...formData,
+          updated_at: new Date().toISOString()
+        };
+        
+        console.log('Dados para atualização:', updateData);
+
+        const { data: updatedCourt, error: updateError } = await supabase
+          .from('courts')
+          .update(updateData)
+          .eq('id', court.id)
+          .select();
+
+        console.log('Resultado da atualização:', { updatedCourt, updateError });
+
+        if (updateError) throw updateError;
+
+        // Atualizar amenities
+        console.log('PASSO 4 - Atualizando amenities');
+        await supabase.from('amenities').delete().eq('court_id', court.id);
+        
+        if (selectedAmenities.length > 0) {
+          const amenitiesData = selectedAmenities.map(name => ({ court_id: court.id, name }));
+          console.log('Inserindo amenities:', amenitiesData);
+          
+          const { data: amenitiesResult, error: amenitiesError } = await supabase
+            .from('amenities')
+            .insert(amenitiesData);
+
+          console.log('Resultado da inserção de amenities:', { amenitiesResult, amenitiesError });
+          if (amenitiesError) throw amenitiesError;
+        }
+
+        // Atualizar imagens
+        console.log('PASSO 5 - Atualizando imagens');
+        await supabase.from('court_images').delete().eq('court_id', court.id);
+        
+        const validImageUrls = imageUrls.filter(url => url.trim() !== '');
+        if (validImageUrls.length > 0) {
+          const imagesData = validImageUrls.map((url, idx) => ({
+            court_id: court.id,
+            image_url: url,
+            order: idx
+          }));
+          
+          console.log('Inserindo imagens:', imagesData);
+          
+          const { data: imagesResult, error: imagesError } = await supabase
+            .from('court_images')
+            .insert(imagesData);
+
+          console.log('Resultado da inserção de imagens:', { imagesResult, imagesError });
+          if (imagesError) throw imagesError;
+        }
+      } else {
+        // CRIAR nova quadra
+        console.log('PASSO 3 - Criando nova quadra');
+        
+        const courtData = {
+          ...formData,
+          owner_id: userId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        console.log('Dados da nova quadra:', courtData);
+
+        const { data: newCourt, error: insertError } = await supabase
+          .from('courts')
+          .insert(courtData)
+          .select()
+          .single();
+
+        console.log('Resultado da inserção da quadra:', { newCourt, insertError });
+
+        if (insertError) {
+          console.error('Erro detalhado ao inserir quadra:', insertError);
+          throw insertError;
+        }
+
+        console.log('✅ QUADRA CRIADA COM SUCESSO! ID:', newCourt.id);
+
+        // Inserir amenities
+        if (selectedAmenities.length > 0) {
+          console.log('PASSO 4 - Inserindo amenities');
+          const amenitiesData = selectedAmenities.map(name => ({ court_id: newCourt.id, name }));
+          
+          console.log('Dados das amenities:', amenitiesData);
+          
+          const { data: amenitiesResult, error: amenitiesError } = await supabase
+            .from('amenities')
+            .insert(amenitiesData);
+
+          console.log('Resultado da inserção de amenities:', { amenitiesResult, amenitiesError });
+          if (amenitiesError) throw amenitiesError;
+        }
+
+        // Inserir imagens
+        const validImageUrls = imageUrls.filter(url => url.trim() !== '');
+        if (validImageUrls.length > 0) {
+          console.log('PASSO 5 - Inserindo imagens');
+          const imagesData = validImageUrls.map((url, idx) => ({
+            court_id: newCourt.id,
+            image_url: url,
+            order: idx
+          }));
+          
+          console.log('Dados das imagens:', imagesData);
+          
+          const { data: imagesResult, error: imagesError } = await supabase
+            .from('court_images')
+            .insert(imagesData);
+
+          console.log('Resultado da inserção de imagens:', { imagesResult, imagesError });
+          if (imagesError) throw imagesError;
+        }
+      }
+
+      console.log('✅ TODAS AS OPERAÇÕES CONCLUÍDAS COM SUCESSO!');
+      
+      // Verificar se a quadra foi realmente salva
+      const { data: verifyCourt, error: verifyError } = await supabase
+        .from('courts')
+        .select('*')
+        .eq('owner_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      console.log('VERIFICAÇÃO FINAL - Última quadra do usuário:', { verifyCourt, verifyError });
 
       alert('Quadra salva com sucesso!');
       onSuccess();
       
     } catch (error: any) {
-      console.error('Erro:', error);
+      console.error('❌ ERRO NO PROCESSO:', error);
       alert('Erro ao salvar quadra: ' + error.message);
     } finally {
       setLoading(false);
+      console.log('=== FIM DO SUBMIT ===');
     }
   };
 
