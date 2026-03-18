@@ -167,7 +167,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
         console.log('Criando perfil...');
         
         const { error: createError } = await supabase
-          .from('profilesS')
+          .from('"profilesS"')
           .insert({
             id: userId,
             email: userEmail || '',
