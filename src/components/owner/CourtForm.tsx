@@ -68,7 +68,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     try {
       // Verificar se o perfil existe
       const { data: profile, error: checkError } = await supabase
-        .from('profilesS')
+        .from('"profilesS"')
         .select('id')
         .eq('id', id)
         .maybeSingle();
