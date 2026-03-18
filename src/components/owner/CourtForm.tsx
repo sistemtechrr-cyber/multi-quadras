@@ -82,7 +82,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
         console.log('Criando perfil para o usuário:', id);
         
         const { error: createError } = await supabase
-          .from('profilesS')
+          .from('"profilesS"')
           .insert({
             id: id,
             email: email,
