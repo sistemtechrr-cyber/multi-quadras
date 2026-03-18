@@ -3,7 +3,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../types/database';
 
-type Profile = Database['public']['Tables']['profilesS']['Row'];
+type Profile = Database['public']['Tables']['"profilesS"']['Row'];
 
 interface AuthContextType {
   user: User | null;
