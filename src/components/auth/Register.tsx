@@ -51,7 +51,7 @@ export function Register({ onToggle }: RegisterProps) {
 
       // 2. Depois, criar o perfil manualmente na tabela profilesS
       const { error: profileError } = await supabase
-        .from('profilesS')
+        .from('"profilesS"')
         .insert({
           id: authData.user.id,
           email: email,
