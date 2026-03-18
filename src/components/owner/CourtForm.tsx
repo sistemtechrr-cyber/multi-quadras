@@ -56,15 +56,17 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   // Função para garantir que o perfil existe
   const ensureProfileExists = async () => {
     if (!profile) {
+      console.log('❌ Profile não encontrado no ensureProfileExists');
       setInitializing(false);
       return false;
     }
 
     try {
       console.log('🔍 Verificando perfil:', profile.id);
+      console.log('Profile completo:', profile);
 
       // ESTRATÉGIA 1: Tentar buscar o profile
-      let { data: existingProfile, error: fetchError } = await supabase
+      const { data: existingProfile, error: fetchError } = await supabase
         .from('profilesS')
         .select('*')
         .eq('id', profile.id)
@@ -73,6 +75,8 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
       if (fetchError) {
         console.error('Erro ao buscar profile:', fetchError);
       }
+
+      console.log('Profile existente:', existingProfile);
 
       // Se não encontrou, tentar criar
       if (!existingProfile) {
@@ -91,7 +95,6 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
 
         console.log('Dados a serem inseridos:', profileData);
 
-        // ESTRATÉGIA 2: Inserir com tratamento de erro
         const { data: insertData, error: insertError } = await supabase
           .from('profilesS')
           .insert(profileData)
@@ -100,73 +103,15 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
 
         if (insertError) {
           console.error('❌ Erro ao inserir profile:', insertError);
-
-          // ESTRATÉGIA 3: Se falhou, tentar upsert
-          console.log('Tentando upsert...');
-          
-          const { data: upsertData, error: upsertError } = await supabase
-            .from('profilesS')
-            .upsert(profileData, { onConflict: 'id' })
-            .select()
-            .single();
-
-          if (upsertError) {
-            console.error('❌ Upsert também falhou:', upsertError);
-            
-            // ESTRATÉGIA 4: Verificar se a tabela existe
-            const { data: tables, error: tablesError } = await supabase
-              .from('information_schema.tables')
-              .select('table_name')
-              .eq('table_schema', 'public')
-              .eq('table_name', 'profilesS');
-
-            console.log('Tabela profilesS existe?', tables);
-
-            return false;
-          }
-
-          console.log('✅ Profile criado via upsert:', upsertData);
-          existingProfile = upsertData;
-        } else {
-          console.log('✅ Profile criado com sucesso:', insertData);
-          existingProfile = insertData;
+          return false;
         }
+
+        console.log('✅ Profile criado com sucesso:', insertData);
       } else {
         console.log('✅ Profile já existe:', existingProfile);
-
-        // Verificar se é owner, se não for, atualizar
-        if (existingProfile.user_type !== 'owner') {
-          console.log('Atualizando user_type para owner...');
-          
-          const { error: updateError } = await supabase
-            .from('profilesS')
-            .update({ 
-              user_type: 'owner',
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', profile.id);
-
-          if (updateError) {
-            console.error('Erro ao atualizar user_type:', updateError);
-          } else {
-            console.log('user_type atualizado para owner');
-          }
-        }
       }
 
-      // Verificação final
-      const { data: finalCheck, error: finalError } = await supabase
-        .from('profilesS')
-        .select('id, user_type')
-        .eq('id', profile.id)
-        .single();
-
-      if (finalError) {
-        console.error('❌ Verificação final falhou:', finalError);
-        return false;
-      }
-
-      console.log('✅ Perfil verificado com sucesso:', finalCheck);
+      setProfileVerified(true);
       return true;
 
     } catch (error) {
@@ -180,21 +125,26 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   // Verificar perfil ao carregar
   useEffect(() => {
     const verifyProfile = async () => {
-      const verified = await ensureProfileExists();
-      setProfileVerified(verified);
+      console.log('Verificando profile...');
+      console.log('Profile do contexto:', profile);
+      
+      if (profile) {
+        await ensureProfileExists();
+      } else {
+        console.log('Profile não disponível ainda');
+        setInitializing(false);
+      }
     };
 
-    if (profile) {
-      verifyProfile();
-    } else {
-      setInitializing(false);
-    }
+    verifyProfile();
   }, [profile]);
 
   const loadCourtData = async () => {
     if (!court) return;
 
     try {
+      console.log('Carregando dados da quadra:', court.id);
+      
       const { data: amenities } = await supabase
         .from('amenities')
         .select('name')
@@ -221,6 +171,9 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('=== INICIANDO SUBMIT ===');
+    console.log('Profile:', profile);
+    
     if (!profile) {
       alert('Usuário não autenticado');
       return;
@@ -232,42 +185,35 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     }
 
     setLoading(true);
+    console.log('Loading set to true');
 
     try {
       console.log('🚀 Iniciando salvamento da quadra...');
       console.log('Profile ID:', profile.id);
+      console.log('Form Data:', formData);
+      console.log('Selected Amenities:', selectedAmenities);
+      console.log('Image URLs:', imageUrls);
 
-      // Verificar novamente se o profile existe (redundância para segurança)
+      // Verificar se o profile existe
       const { data: profileCheck, error: checkError } = await supabase
         .from('profilesS')
         .select('id')
         .eq('id', profile.id)
-        .single();
+        .maybeSingle();
+
+      console.log('Profile check:', { profileCheck, checkError });
 
       if (checkError || !profileCheck) {
-        console.log('Profile não encontrado na verificação final, tentando criar...');
-        
-        // Tentar criar o profile mais uma vez
-        const { error: createError } = await supabase
-          .from('profilesS')
-          .insert({
-            id: profile.id,
-            email: profile.email,
-            full_name: profile.user_metadata?.full_name || profile.email?.split('@')[0] || 'Proprietário',
-            user_type: 'owner',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
-
-        if (createError) {
-          console.error('Erro ao criar profile na verificação final:', createError);
-          throw new Error('Não foi possível criar/verificar o perfil do proprietário');
-        }
+        console.error('Profile não encontrado:', checkError);
+        alert('Perfil não encontrado. Por favor, faça login novamente.');
+        setLoading(false);
+        return;
       }
 
-      // AGORA sim, inserir a quadra
       if (court) {
         // Editar quadra existente
+        console.log('Editando quadra existente:', court.id);
+        
         const { error: updateError } = await supabase
           .from('courts')
           .update({
@@ -276,8 +222,13 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           })
           .eq('id', court.id);
 
-        if (updateError) throw updateError;
+        if (updateError) {
+          console.error('Erro ao atualizar quadra:', updateError);
+          throw updateError;
+        }
 
+        console.log('Quadra atualizada, atualizando amenities...');
+        
         // Atualizar amenities
         await supabase.from('amenities').delete().eq('court_id', court.id);
         
@@ -289,6 +240,8 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           if (amenitiesError) throw amenitiesError;
         }
 
+        console.log('Amenities atualizadas, atualizando imagens...');
+        
         // Atualizar imagens
         await supabase.from('court_images').delete().eq('court_id', court.id);
         
@@ -308,27 +261,34 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
         // Criar nova quadra
         console.log('Criando nova quadra com owner_id:', profile.id);
         
-        // Primeiro, inserir a quadra
+        const courtData = {
+          ...formData,
+          owner_id: profile.id,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        console.log('Dados da nova quadra:', courtData);
+
         const { data: newCourt, error: insertError } = await supabase
           .from('courts')
-          .insert({
-            ...formData,
-            owner_id: profile.id,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
+          .insert(courtData)
           .select()
           .single();
 
         if (insertError) {
           console.error('Erro detalhado ao inserir quadra:', insertError);
-          throw insertError;
+          alert('Erro ao criar quadra: ' + insertError.message);
+          setLoading(false);
+          return;
         }
 
-        console.log('Quadra criada com sucesso:', newCourt);
+        console.log('✅ Quadra criada com sucesso:', newCourt);
 
         // Inserir amenities
         if (newCourt && selectedAmenities.length > 0) {
+          console.log('Inserindo amenities...');
+          
           const { error: amenitiesError } = await supabase
             .from('amenities')
             .insert(selectedAmenities.map(name => ({ court_id: newCourt.id, name })));
@@ -342,6 +302,8 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
         // Inserir imagens
         const validImageUrls = imageUrls.filter(url => url.trim() !== '');
         if (newCourt && validImageUrls.length > 0) {
+          console.log('Inserindo imagens...');
+          
           const { error: imagesError } = await supabase
             .from('court_images')
             .insert(validImageUrls.map((url, idx) => ({
@@ -358,11 +320,14 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
       }
 
       console.log('✅ Quadra salva com sucesso!');
+      alert('Quadra salva com sucesso!');
       onSuccess();
+      
     } catch (error: any) {
       console.error('❌ Error saving court:', error);
       alert('Erro ao salvar quadra: ' + error.message);
     } finally {
+      console.log('Finalizando submit, loading set to false');
       setLoading(false);
     }
   };
@@ -461,6 +426,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           </h2>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Restante do formulário permanece igual */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
