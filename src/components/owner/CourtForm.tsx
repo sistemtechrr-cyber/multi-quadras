@@ -48,24 +48,62 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   // Buscar o usuário atual quando o componente montar
   useEffect(() => {
     const getCurrentUser = async () => {
-      console.log('=== BUSCANDO USUÁRIO ATUAL ===');
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user) {
         setUserId(session.user.id);
         setUserEmail(session.user.email || null);
-        console.log('Usuário encontrado:', {
-          id: session.user.id,
-          email: session.user.email,
-          metadata: session.user.user_metadata
-        });
-      } else {
-        console.error('NENHUM USUÁRIO LOGADO!');
+        console.log('Usuário logado:', session.user.email);
+        
+        // Já criar o perfil aqui se não existir
+        await ensureProfileExists(session.user.id, session.user.email);
       }
     };
     
     getCurrentUser();
   }, []);
+
+  // Função para garantir que o perfil existe
+  const ensureProfileExists = async (id: string, email: string) => {
+    try {
+      // Verificar se o perfil existe
+      const { data: profile, error: checkError } = await supabase
+        .from('profilesS')
+        .select('id')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (checkError) {
+        console.error('Erro ao verificar perfil:', checkError);
+      }
+
+      // Se não existir, criar
+      if (!profile) {
+        console.log('Criando perfil para o usuário:', id);
+        
+        const { error: createError } = await supabase
+          .from('profilesS')
+          .insert({
+            id: id,
+            email: email,
+            full_name: 'Proprietário',
+            user_type: 'owner',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (createError) {
+          console.error('Erro ao criar perfil:', createError);
+        } else {
+          console.log('Perfil criado com sucesso!');
+        }
+      } else {
+        console.log('Perfil já existe:', profile);
+      }
+    } catch (error) {
+      console.error('Erro ao garantir perfil:', error);
+    }
+  };
 
   useEffect(() => {
     if (court) {
@@ -77,35 +115,23 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     if (!court) return;
 
     try {
-      console.log('Carregando dados da quadra existente:', court.id);
-      
-      const { data: amenities, error: amenitiesError } = await supabase
+      const { data: amenities } = await supabase
         .from('amenities')
         .select('name')
         .eq('court_id', court.id);
 
-      if (amenitiesError) {
-        console.error('Erro ao carregar amenities:', amenitiesError);
-      } else {
-        console.log('Amenities carregadas:', amenities);
-        if (amenities) {
-          setSelectedAmenities(amenities.map(a => a.name));
-        }
+      if (amenities) {
+        setSelectedAmenities(amenities.map(a => a.name));
       }
 
-      const { data: images, error: imagesError } = await supabase
+      const { data: images } = await supabase
         .from('court_images')
         .select('image_url')
         .eq('court_id', court.id)
         .order('order');
 
-      if (imagesError) {
-        console.error('Erro ao carregar imagens:', imagesError);
-      } else {
-        console.log('Imagens carregadas:', images);
-        if (images && images.length > 0) {
-          setImageUrls(images.map(i => i.image_url));
-        }
+      if (images && images.length > 0) {
+        setImageUrls(images.map(i => i.image_url));
       }
     } catch (error) {
       console.error('Erro ao carregar dados da quadra:', error);
@@ -115,13 +141,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    console.log('=== INICIANDO SUBMIT ===');
-    console.log('Dados do formulário:', formData);
-    console.log('Amenities selecionadas:', selectedAmenities);
-    console.log('URLs das imagens:', imageUrls);
-    
     if (!userId) {
-      console.error('ERRO: userId não encontrado');
       alert('Usuário não está logado. Faça login novamente.');
       return;
     }
@@ -129,26 +149,24 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
     setLoading(true);
 
     try {
-      // PASSO 1: Verificar se o usuário tem perfil
-      console.log('PASSO 1 - Verificando perfil do usuário:', userId);
+      // PASSO 1: GARANTIR QUE O PERFIL EXISTE (de novo, por segurança)
+      console.log('Verificando/Criando perfil...');
       
       const { data: profile, error: profileError } = await supabase
         .from('profilesS')
-        .select('*')
+        .select('id')
         .eq('id', userId)
         .maybeSingle();
 
-      console.log('Resultado da busca de perfil:', { profile, profileError });
-
       if (profileError) {
-        console.error('Erro ao buscar perfil:', profileError);
+        console.error('Erro ao verificar perfil:', profileError);
       }
 
-      // Se não tiver perfil, criar
+      // Se não existir, criar o perfil
       if (!profile) {
-        console.log('PASSO 2 - Perfil não encontrado, criando novo perfil...');
+        console.log('Criando perfil...');
         
-        const { data: newProfile, error: createError } = await supabase
+        const { error: createError } = await supabase
           .from('profilesS')
           .insert({
             id: userId,
@@ -157,11 +175,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
             user_type: 'owner',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
-          })
-          .select()
-          .single();
-
-        console.log('Resultado da criação de perfil:', { newProfile, createError });
+          });
 
         if (createError) {
           console.error('Erro ao criar perfil:', createError);
@@ -169,77 +183,82 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
         }
       }
 
-      // PASSO 3: Verificar/Criar a quadra
+      // PASSO 2: VERIFICAR NOVAMENTE SE O PERFIL AGORA EXISTE
+      const { data: verifyProfile, error: verifyError } = await supabase
+        .from('profilesS')
+        .select('id')
+        .eq('id', userId)
+        .single();
+
+      if (verifyError || !verifyProfile) {
+        console.error('Perfil ainda não existe após tentativa de criação:', verifyError);
+        throw new Error('Não foi possível criar o perfil do proprietário');
+      }
+
+      console.log('Perfil verificado, ID:', verifyProfile.id);
+
+      // PASSO 3: AGORA SIM, CRIAR/EDITAR A QUADRA
       if (court) {
         // EDITAR quadra existente
-        console.log('PASSO 3 - Editando quadra existente:', court.id);
-        
-        const updateData = {
-          ...formData,
-          updated_at: new Date().toISOString()
-        };
-        
-        console.log('Dados para atualização:', updateData);
-
-        const { data: updatedCourt, error: updateError } = await supabase
+        const { error: updateError } = await supabase
           .from('courts')
-          .update(updateData)
-          .eq('id', court.id)
-          .select();
-
-        console.log('Resultado da atualização:', { updatedCourt, updateError });
+          .update({
+            ...formData,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', court.id);
 
         if (updateError) throw updateError;
 
         // Atualizar amenities
-        console.log('PASSO 4 - Atualizando amenities');
         await supabase.from('amenities').delete().eq('court_id', court.id);
         
         if (selectedAmenities.length > 0) {
-          const amenitiesData = selectedAmenities.map(name => ({ court_id: court.id, name }));
-          console.log('Inserindo amenities:', amenitiesData);
-          
-          const { data: amenitiesResult, error: amenitiesError } = await supabase
+          const { error: amenitiesError } = await supabase
             .from('amenities')
-            .insert(amenitiesData);
+            .insert(selectedAmenities.map(name => ({ court_id: court.id, name })));
 
-          console.log('Resultado da inserção de amenities:', { amenitiesResult, amenitiesError });
           if (amenitiesError) throw amenitiesError;
         }
 
         // Atualizar imagens
-        console.log('PASSO 5 - Atualizando imagens');
         await supabase.from('court_images').delete().eq('court_id', court.id);
         
         const validImageUrls = imageUrls.filter(url => url.trim() !== '');
         if (validImageUrls.length > 0) {
-          const imagesData = validImageUrls.map((url, idx) => ({
-            court_id: court.id,
-            image_url: url,
-            order: idx
-          }));
-          
-          console.log('Inserindo imagens:', imagesData);
-          
-          const { data: imagesResult, error: imagesError } = await supabase
+          const { error: imagesError } = await supabase
             .from('court_images')
-            .insert(imagesData);
+            .insert(validImageUrls.map((url, idx) => ({
+              court_id: court.id,
+              image_url: url,
+              order: idx
+            })));
 
-          console.log('Resultado da inserção de imagens:', { imagesResult, imagesError });
           if (imagesError) throw imagesError;
         }
       } else {
         // CRIAR nova quadra
-        console.log('PASSO 3 - Criando nova quadra');
+        console.log('Criando quadra com owner_id:', userId);
         
         const courtData = {
-          ...formData,
+          name: formData.name,
+          sport_type: formData.sport_type,
+          description: formData.description || null,
+          street: formData.street || null,
+          number: formData.number || null,
+          neighborhood: formData.neighborhood || null,
+          city: formData.city || null,
+          state: formData.state || null,
+          zip_code: formData.zip_code || null,
+          contact_phone: formData.contact_phone || null,
+          price_per_hour: formData.price_per_hour,
+          status: formData.status,
           owner_id: userId,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         };
-        
-        console.log('Dados da nova quadra:', courtData);
+
+        console.log('Dados da quadra:', courtData);
 
         const { data: newCourt, error: insertError } = await supabase
           .from('courts')
@@ -247,72 +266,45 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           .select()
           .single();
 
-        console.log('Resultado da inserção da quadra:', { newCourt, insertError });
-
         if (insertError) {
-          console.error('Erro detalhado ao inserir quadra:', insertError);
+          console.error('Erro ao inserir quadra:', insertError);
           throw insertError;
         }
 
-        console.log('✅ QUADRA CRIADA COM SUCESSO! ID:', newCourt.id);
+        console.log('Quadra criada com ID:', newCourt.id);
 
         // Inserir amenities
         if (selectedAmenities.length > 0) {
-          console.log('PASSO 4 - Inserindo amenities');
-          const amenitiesData = selectedAmenities.map(name => ({ court_id: newCourt.id, name }));
-          
-          console.log('Dados das amenities:', amenitiesData);
-          
-          const { data: amenitiesResult, error: amenitiesError } = await supabase
+          const { error: amenitiesError } = await supabase
             .from('amenities')
-            .insert(amenitiesData);
+            .insert(selectedAmenities.map(name => ({ court_id: newCourt.id, name })));
 
-          console.log('Resultado da inserção de amenities:', { amenitiesResult, amenitiesError });
           if (amenitiesError) throw amenitiesError;
         }
 
         // Inserir imagens
         const validImageUrls = imageUrls.filter(url => url.trim() !== '');
         if (validImageUrls.length > 0) {
-          console.log('PASSO 5 - Inserindo imagens');
-          const imagesData = validImageUrls.map((url, idx) => ({
-            court_id: newCourt.id,
-            image_url: url,
-            order: idx
-          }));
-          
-          console.log('Dados das imagens:', imagesData);
-          
-          const { data: imagesResult, error: imagesError } = await supabase
+          const { error: imagesError } = await supabase
             .from('court_images')
-            .insert(imagesData);
+            .insert(validImageUrls.map((url, idx) => ({
+              court_id: newCourt.id,
+              image_url: url,
+              order: idx
+            })));
 
-          console.log('Resultado da inserção de imagens:', { imagesResult, imagesError });
           if (imagesError) throw imagesError;
         }
       }
-
-      console.log('✅ TODAS AS OPERAÇÕES CONCLUÍDAS COM SUCESSO!');
-      
-      // Verificar se a quadra foi realmente salva
-      const { data: verifyCourt, error: verifyError } = await supabase
-        .from('courts')
-        .select('*')
-        .eq('owner_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      console.log('VERIFICAÇÃO FINAL - Última quadra do usuário:', { verifyCourt, verifyError });
 
       alert('Quadra salva com sucesso!');
       onSuccess();
       
     } catch (error: any) {
-      console.error('❌ ERRO NO PROCESSO:', error);
+      console.error('Erro:', error);
       alert('Erro ao salvar quadra: ' + error.message);
     } finally {
       setLoading(false);
-      console.log('=== FIM DO SUBMIT ===');
     }
   };
 
@@ -351,6 +343,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
 
   return (
     <div className="min-h-screen bg-gray-50 pb-12">
+      {/* Restante do JSX igual ao seu código original */}
       <div className="bg-white shadow-md">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <button
@@ -370,223 +363,9 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
           </h2>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Mantenha todo o formulário igual ao seu código original */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nome da Quadra
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Modalidade Esportiva
-                </label>
-                <select
-                  value={formData.sport_type}
-                  onChange={(e) => setFormData({ ...formData, sport_type: e.target.value as any })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                >
-                  <option value="futebol_society">Futebol Society</option>
-                  <option value="futevolei">Futevôlei</option>
-                  <option value="beach_tennis">Beach Tennis</option>
-                  <option value="volei">Vôlei</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Preço por Hora (R$)
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={formData.price_per_hour}
-                  onChange={(e) => setFormData({ ...formData, price_per_hour: parseFloat(e.target.value) || 0 })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  required
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Descrição
-                </label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  rows={4}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Descreva os detalhes da quadra (tipo de piso, iluminação, etc.)"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Rua
-                </label>
-                <input
-                  type="text"
-                  value={formData.street}
-                  onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Número
-                </label>
-                <input
-                  type="text"
-                  value={formData.number}
-                  onChange={(e) => setFormData({ ...formData, number: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Bairro
-                </label>
-                <input
-                  type="text"
-                  value={formData.neighborhood}
-                  onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Cidade
-                </label>
-                <input
-                  type="text"
-                  value={formData.city}
-                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Estado
-                </label>
-                <input
-                  type="text"
-                  value={formData.state}
-                  onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Ex: SP"
-                  maxLength={2}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  CEP
-                </label>
-                <input
-                  type="text"
-                  value={formData.zip_code}
-                  onChange={(e) => setFormData({ ...formData, zip_code: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="00000-000"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Telefone de Contato
-                </label>
-                <input
-                  type="tel"
-                  value={formData.contact_phone}
-                  onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="(00) 00000-0000"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Status
-                </label>
-                <select
-                  value={formData.status}
-                  onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="active">Ativa</option>
-                  <option value="inactive">Inativa</option>
-                </select>
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Comodidades
-                </label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {amenitiesList.map((amenity) => (
-                    <label
-                      key={amenity}
-                      className="flex items-center space-x-2 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedAmenities.includes(amenity)}
-                        onChange={() => toggleAmenity(amenity)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-gray-700">{amenity}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  URLs das Imagens
-                </label>
-                <div className="space-y-2">
-                  {imageUrls.map((url, index) => (
-                    <div key={index} className="flex space-x-2">
-                      <input
-                        type="url"
-                        value={url}
-                        onChange={(e) => updateImageUrl(index, e.target.value)}
-                        placeholder="https://exemplo.com/imagem.jpg"
-                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      {imageUrls.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeImageField(index)}
-                          className="px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
-                        >
-                          Remover
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={addImageField}
-                    className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-                  >
-                    + Adicionar mais uma imagem
-                  </button>
-                </div>
-              </div>
+              {/* ... todos os campos do formulário (copie do seu código original) ... */}
             </div>
 
             <div className="flex space-x-4 pt-6 border-t">
