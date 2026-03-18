@@ -153,7 +153,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
       console.log('Verificando/Criando perfil...');
       
       const { data: profile, error: profileError } = await supabase
-        .from('profilesS')
+        .from('"profilesS"')
         .select('id')
         .eq('id', userId)
         .maybeSingle();
