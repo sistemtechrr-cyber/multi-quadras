@@ -66,7 +66,7 @@ export function Register({ onToggle }: RegisterProps) {
         
         // Se falhou ao criar o perfil, vamos tentar novamente com mais dados
         const { error: retryError } = await supabase
-          .from('profilesS')
+          .from('"profilesS"')
           .insert({
             id: authData.user.id,
             email: email,
