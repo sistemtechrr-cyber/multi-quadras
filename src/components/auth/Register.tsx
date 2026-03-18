@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { UserPlus } from 'lucide-react';
 
 interface RegisterProps {
@@ -28,10 +29,74 @@ export function Register({ onToggle }: RegisterProps) {
     }
 
     try {
-      await signUp(email, password, userType, fullName);
+      // 1. Primeiro, criar o usuário na autenticação
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            user_type: userType
+          }
+        }
+      });
+
+      if (signUpError) throw signUpError;
+
+      if (!authData.user) {
+        throw new Error('Erro ao criar usuário');
+      }
+
+      console.log('Usuário criado com ID:', authData.user.id);
+
+      // 2. Depois, criar o perfil manualmente na tabela profilesS
+      const { error: profileError } = await supabase
+        .from('profilesS')
+        .insert({
+          id: authData.user.id,
+          email: email,
+          full_name: fullName,
+          user_type: userType,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+      if (profileError) {
+        console.error('Erro detalhado ao criar perfil:', profileError);
+        
+        // Se falhou ao criar o perfil, vamos tentar novamente com mais dados
+        const { error: retryError } = await supabase
+          .from('profilesS')
+          .insert({
+            id: authData.user.id,
+            email: email,
+            full_name: fullName,
+            phone: '',
+            user_type: userType,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (retryError) {
+          console.error('Erro na segunda tentativa:', retryError);
+          throw new Error('Erro ao criar perfil do usuário: ' + retryError.message);
+        }
+      }
+
+      console.log('Perfil criado com sucesso!');
       setSuccess(true);
+      
     } catch (err: any) {
-      setError(err.message || 'Erro ao criar conta');
+      console.error('Erro completo:', err);
+      
+      // Tratamento de erros mais específico
+      if (err.message?.includes('Database error')) {
+        setError('Erro ao salvar dados do usuário. Por favor, tente novamente.');
+      } else if (err.message?.includes('duplicate key')) {
+        setError('Este email já está cadastrado.');
+      } else {
+        setError(err.message || 'Erro ao criar conta');
+      }
     } finally {
       setLoading(false);
     }
