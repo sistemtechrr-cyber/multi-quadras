@@ -185,7 +185,7 @@ export function CourtForm({ court, onClose, onSuccess }: CourtFormProps) {
 
       // PASSO 2: VERIFICAR NOVAMENTE SE O PERFIL AGORA EXISTE
       const { data: verifyProfile, error: verifyError } = await supabase
-        .from('profilesS')
+        .from('"profilesS"')
         .select('id')
         .eq('id', userId)
         .single();
